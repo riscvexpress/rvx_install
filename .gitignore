@@ -1,0 +1,15 @@
+*~
+*.swp
+*.swo
+*.bak
+*.sh
+*.zip
+.vscode
+__pycache__
+
+.rvx_*
+rvx_*.log
+rvx_config_python.mh
+rvx_setup.sh
+
+# local
