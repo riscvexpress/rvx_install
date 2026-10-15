@@ -11,6 +11,5 @@ __pycache__
 rvx_*.log
 rvx_config_python.mh
 rvx_setup.sh
-!*synthesizer/_internal/base_library.zip
 
 # local
