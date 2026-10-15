@@ -120,7 +120,10 @@ def cmd_check_env(checker):
     check_pip(checker)
     checker.check_tool('git')
     if not is_windows():
-        checker.check_tool('wget' if not shutil.which('curl') and shutil.which('wget') else 'curl')
+        if shutil.which('curl') or shutil.which('wget'):
+            checker.check_tool('curl' if shutil.which('curl') else 'wget')
+        else:
+            checker.error('curl or wget', 'NOT found in PATH')
     checker.check_tool('uv', is_required=False)
 
 #######################
@@ -393,6 +396,44 @@ def cmd_setup_gitignore():
     return 0
 
 
+README_LOCAL_MARKER = '<!-- local -->'
+
+
+def cmd_setup_readme():
+    template_file = os.path.join(HOME_PATH, 'rvx_install', 'README.md.template')
+    output_file = os.path.join(HOME_PATH, 'README.md')
+    with open(template_file, encoding='utf8') as f:
+        line_list = f.read().rstrip('\n').split('\n')
+    if README_LOCAL_MARKER not in line_list:
+        line_list += ['', README_LOCAL_MARKER]
+    if os.path.isfile(output_file):
+        with open(output_file, encoding='utf8') as f:
+            old_line_list = f.read().rstrip('\n').split('\n')
+        if README_LOCAL_MARKER in old_line_list:
+            local_line_list = old_line_list[old_line_list.index(README_LOCAL_MARKER) + 1:]
+        elif '\n'.join(old_line_list).strip() != '\n'.join(line_list[:line_list.index(README_LOCAL_MARKER)]).strip():
+            local_line_list = [''] + old_line_list
+        else:
+            local_line_list = []
+        line_list = line_list[:line_list.index(README_LOCAL_MARKER) + 1] + local_line_list
+    with open(output_file, 'r+' if os.path.isfile(output_file) else 'w', encoding='utf8', newline='\n') as f:
+        f.write('\n'.join(line_list) + '\n')
+        f.truncate()
+    print('generated {0}'.format(output_file))
+    return 0
+
+
+def cmd_setup_init():
+    template_file = os.path.join(HOME_PATH, 'rvx_install', 'rvx_init.mh')
+    output_file = os.path.join(HOME_PATH, 'rvx_init.mh')
+    if os.path.isfile(output_file) and filecmp.cmp(template_file, output_file, shallow=False):
+        print('{0} is up to date'.format(output_file))
+        return 0
+    shutil.copyfile(template_file, output_file)
+    print('updated {0}'.format(output_file))
+    return 0
+
+
 def cmd_setup_misc():
     returncode = 0
     if is_windows():
@@ -616,6 +657,8 @@ CMD_DICT['update_modules'] = (cmd_update_modules, 'pull_modules, then update_ver
 CMD_DICT['update_version_info'] = (cmd_update_version_info, 'update url, commit and date in rvx_version_info.xml from each module with url')
 CMD_DICT['setup_misc'] = (cmd_setup_misc, 'set RVX_RELEASE_HOME (setx on windows, rvx_setup.sh on linux)')
 CMD_DICT['setup_gitignore'] = (cmd_setup_gitignore, 'generate .gitignore from rvx_install/gitignore.template and rvx_version_info.xml')
+CMD_DICT['setup_readme'] = (cmd_setup_readme, 'generate README.md from rvx_install/README.md.template')
+CMD_DICT['setup_init'] = (cmd_setup_init, 'overwrite rvx_init.mh with rvx_install/rvx_init.mh')
 CMD_DICT['setup_modules'] = (cmd_setup_modules, 'clone or update the modules in RVX_MODULE_LIST')
 CMD_DICT['setup_udev'] = (cmd_setup_udev, 'copy udev rules to /etc/udev/rules.d and reload them (linux only)')
 CMD_DICT['check_install'] = (cmd_check_install, 'run every check_* command')

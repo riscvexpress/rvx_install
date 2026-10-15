@@ -1,0 +1,98 @@
+## prerequisite ##
+# Linux   : make, curl or wget, git
+# macOS   : xcode-select --install   (make, curl, git)
+# Windows : scoop -> git, make
+#   Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+#   Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+#   scoop install git make
+
+# init
+ifeq ($(OS),Windows_NT)
+  SH_BIN_DIR:=$(shell sh -c "cygpath -m /usr/bin" 2>/dev/null)
+  ifneq (${SH_BIN_DIR},)
+    export PATH:=${SH_BIN_DIR};${PATH}
+  endif
+endif
+
+RVX_INSTALL_HOME?= ./rvx_install
+RVX_UTIL_HOME?= ./rvx_util
+
+## install python ##
+
+
+PYTHON3_VERSION_TO_INSTALL?=3.9.18
+PYTHON_VENV_DIR?=${CURDIR}/.rvx_venv
+
+ifeq ($(OS),Windows_NT)
+  UV_INSTALL_DIR?=$(subst \,/,${USERPROFILE})/.local/bin
+  UV_CMD?=${UV_INSTALL_DIR}/uv.exe
+  PYTHON_VENV_CMD=${PYTHON_VENV_DIR}/Scripts/python.exe
+else
+  UV_INSTALL_DIR?=${HOME}/.local/bin
+  UV_CMD?=${UV_INSTALL_DIR}/uv
+  PYTHON_VENV_CMD=${PYTHON_VENV_DIR}/bin/python
+endif
+
+install_uv: export UV_INSTALL_DIR:=${UV_INSTALL_DIR}
+install_uv:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+else
+	@if command -v curl >/dev/null; then curl -LsSf https://astral.sh/uv/install.sh | sh; \
+	elif command -v wget >/dev/null; then wget -qO- https://astral.sh/uv/install.sh | sh; \
+	else echo "[FAIL] curl or wget is NOT found: install one of them (e.g. sudo apt update && sudo apt install curl)"; exit 1; fi
+endif
+
+install_python: $(if $(wildcard ${UV_CMD}),,install_uv)
+	${UV_CMD} python install ${PYTHON3_VERSION_TO_INSTALL}
+	${UV_CMD} venv --seed --clear --python ${PYTHON3_VERSION_TO_INSTALL} ${PYTHON_VENV_DIR}
+	@echo export PYTHON3_CMD=${PYTHON_VENV_CMD}>${PYTHON_CONFIG_FILE}
+
+.PHONY: install_uv install_python
+
+## setup python ##
+
+ifeq ($(OS),Windows_NT)
+  PYTHON3_FIND_SCRIPT=py -0p 2>/dev/null | sed -n 's/^ *-[^ ]* *[*]* *//p'; \
+                      where python3 python 2>/dev/null
+else
+  PYTHON3_FIND_SCRIPT=which -a python3 python 2>/dev/null; \
+                      ls /usr/bin/python3.* /usr/local/bin/python3.* /opt/*/bin/python3.* 2>/dev/null | grep -E '/python3\.[0-9]+$$'
+endif
+
+setup_python:
+	@cur=$$(sed -n 's/^\(export \)\{0,1\}PYTHON3_CMD=//p' "${PYTHON_CONFIG_FILE}" 2>/dev/null | tr -d '\r'); \
+	{ \
+	  [ -x "${PYTHON_VENV_CMD}" ] && echo "${PYTHON_VENV_CMD}"; \
+	  [ -x "${UV_CMD}" ] && "${UV_CMD}" python list --only-installed 2>/dev/null | awk '{print $$2}'; \
+	  ${PYTHON3_FIND_SCRIPT}; \
+	} | tr -d '\r' | tr '\134' / | grep -v -e WindowsApps -e '[.]bat$$' | { \
+	  seen="|"; tmp="${PYTHON_CONFIG_FILE}.tmp"; : > "$$tmp"; \
+	  while IFS= read -r p; do \
+	    [ -n "$$p" ] || continue; \
+	    key=$$("$$p" -c "import sys,os;print('%d %s'%(sys.version_info[0],os.path.realpath(sys.prefix)))" 2>/dev/null | tr -d '\r'); \
+	    case "$$key" in "3 "*) ;; *) continue;; esac; \
+	    case "$$seen" in *"|$$key|"*) continue;; esac; \
+	    seen="$$seen$$key|"; \
+	    case "$$p" in *" "*) p="\"$$p\"";; esac; \
+	    [ -n "$$cur" ] || cur="$$p"; \
+	    if [ "$$p" = "$$cur" ]; then found=1; echo "export PYTHON3_CMD=$$p"; else echo "#export PYTHON3_CMD=$$p"; fi >> "$$tmp"; \
+	  done; \
+	  [ -n "$$cur" ] || { rm -f "$$tmp"; echo "python3 is NOT found, run 'make install_python' first"; exit 1; }; \
+	  { [ -n "$$found" ] || echo "export PYTHON3_CMD=$$cur"; cat "$$tmp"; } > "${PYTHON_CONFIG_FILE}"; \
+	  rm -f "$$tmp"; \
+	  cat "${PYTHON_CONFIG_FILE}"; \
+	}
+
+.PHONY: setup_python
+
+## check python ##
+
+PYTHON_CONFIG_FILE?=${CURDIR}/rvx_config_python.mh
+-include ${PYTHON_CONFIG_FILE}
+PIP3_CMD?=${PYTHON3_CMD} -m pip
+
+check_python:
+	@echo from ${PYTHON_CONFIG_FILE}
+	@echo PYTHON3_CMD=${PYTHON3_CMD}
+	@${PYTHON3_CMD} --version

@@ -32,7 +32,7 @@ endif
 
 .PHONY: install_pip
 
-PYTHON_CMD_LIST = cmd_list install_others install_pip_package path setup_all setup_misc setup_gitignore setup_modules setup_udev pull_modules remove_modules update_modules update_version_info check_install check_env check_make
+PYTHON_CMD_LIST = cmd_list install_others install_pip_package path setup_all setup_misc setup_gitignore setup_readme setup_init setup_modules setup_udev pull_modules remove_modules update_modules update_version_info check_install check_env check_make
 
 ${PYTHON_CMD_LIST}:%:
 	@${PYTHON3_CMD} ./rvx_install/install.py -cmd $(*)
