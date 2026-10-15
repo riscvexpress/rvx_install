@@ -25,7 +25,7 @@ from pathlib import Path
 
 import xml.etree.ElementTree as ET
 
-from rvx_module import CONFIG_PATH_FILE, FIXED_NAME_SET, find_module, get_declared_name_list, get_default_branch, get_env_path, get_path_var, get_value, is_branch, is_for_this_os, post_setup_module, read_config_path, read_module_list, setup_module, SSL_CERT_FILE, strip_os_suffix, git_output
+from rvx_module import CONFIG_PATH_FILE, FIXED_NAME_SET, find_module, get_declared_name_list, get_default_branch, get_env_path, get_path_var, get_value, is_branch, is_for_this_os, post_setup_module, read_config_path, read_module_list, remove_path, setup_module, SSL_CERT_FILE, strip_os_suffix, git_output
 
 MIN_PYTHON_VERSION = (3, 8)
 MIN_MAKE_VERSION = (3, 81)
@@ -120,7 +120,7 @@ def cmd_check_env(checker):
     check_pip(checker)
     checker.check_tool('git')
     if not is_windows():
-        checker.check_tool('curl')
+        checker.check_tool('wget' if not shutil.which('curl') and shutil.which('wget') else 'curl')
     checker.check_tool('uv', is_required=False)
 
 #######################
@@ -549,16 +549,37 @@ def cmd_pull_modules():
                 break
         else:
             new_commit = git_output('rev-parse', '--short=7', 'HEAD', cwd=module_path)
-            change = '{0} (no update)'.format(new_commit) if new_commit == old_commit else '{0} -> {1}'.format(old_commit, new_commit)
-            print('{0} [{1}] {2}'.format(name, branch, change))
+            print('{0} ({1})'.format(name, 'no update' if new_commit == old_commit else 'updated'))
+    return returncode
+
+
+def cmd_remove_modules():
+    returncode = 0
+    for name, path, url, _ in read_module_list(Path(HOME_PATH) / 'rvx_version_info.xml'):
+        module_path = Path(HOME_PATH) / path
+        if not url or get_env_path(name) or strip_os_suffix(name) == 'rvx_install' or not os.path.lexists(module_path):
+            continue
+        if (module_path / '.git').exists():
+            if git_output('status', '--porcelain', cwd=module_path):
+                print('[FAIL] {0} is NOT removed: it has uncommitted changes'.format(module_path))
+                returncode = 1
+                continue
+            if git_output('log', '--oneline', '@{u}..HEAD', cwd=module_path):
+                print('[FAIL] {0} is NOT removed: it has unpushed commits'.format(module_path))
+                returncode = 1
+                continue
+        remove_path(module_path)
+        print('removed {0}'.format(module_path))
     return returncode
 
 
 def cmd_update_modules():
+    print('## pull_modules', flush=True)
     returncode = cmd_pull_modules()
     if returncode:
         print('[FAIL] pull_modules failed: rvx_version_info.xml is NOT updated')
         return returncode
+    print('## update_version_info', flush=True)
     return cmd_update_version_info()
 
 
@@ -590,6 +611,7 @@ CMD_DICT['install_pip_package'] = (cmd_install_pip_package, 'install pip package
 CMD_DICT['path'] = (cmd_path, 'generate rvx_config_path.mh from rvx_version_info.xml')
 CMD_DICT['setup_all'] = (cmd_setup_all, 'run every setup_* command')
 CMD_DICT['pull_modules'] = (cmd_pull_modules, 'check out the default branch of each module with url and pull it')
+CMD_DICT['remove_modules'] = (cmd_remove_modules, 'remove the modules with url, except the ones with uncommitted changes or unpushed commits')
 CMD_DICT['update_modules'] = (cmd_update_modules, 'pull_modules, then update_version_info')
 CMD_DICT['update_version_info'] = (cmd_update_version_info, 'update url, commit and date in rvx_version_info.xml from each module with url')
 CMD_DICT['setup_misc'] = (cmd_setup_misc, 'set RVX_RELEASE_HOME (setx on windows, rvx_setup.sh on linux)')

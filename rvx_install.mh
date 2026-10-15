@@ -32,7 +32,7 @@ endif
 
 .PHONY: install_pip
 
-PYTHON_CMD_LIST = cmd_list install_others install_pip_package path setup_all setup_misc setup_gitignore setup_modules setup_udev pull_modules update_modules update_version_info check_install check_env check_make
+PYTHON_CMD_LIST = cmd_list install_others install_pip_package path setup_all setup_misc setup_gitignore setup_modules setup_udev pull_modules remove_modules update_modules update_version_info check_install check_env check_make
 
 ${PYTHON_CMD_LIST}:%:
 	@${PYTHON3_CMD} ./rvx_install/install.py -cmd $(*)
@@ -72,4 +72,6 @@ CLEAN_FILE_LIST = rvx_config_path.mh rvx_config_python.mh rvx_setup.sh .rvx_path
 clean:
 	@${PYTHON3_CMD} -c "import glob, os; [(print('removed', x), os.remove(x)) for x in '${CLEAN_FILE_LIST}'.split() + glob.glob('rvx_*.log') if os.path.isfile(x)]"
 
-.PHONY: clean
+distclean: remove_modules clean
+
+.PHONY: clean distclean
