@@ -386,8 +386,9 @@ def cmd_setup_gitignore():
         # a module without url is local: it is left to the local section
         if url and path + '/' not in line_list:
             line_list.append(path + '/')
-    with open(output_file, 'w', encoding='utf8', newline='\n') as f:
+    with open(output_file, 'r+' if os.path.isfile(output_file) else 'w', encoding='utf8', newline='\n') as f:
         f.write('\n'.join(line_list) + '\n')
+        f.truncate()
     print('generated {0}'.format(output_file))
     return 0
 

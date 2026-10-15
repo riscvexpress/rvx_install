@@ -145,8 +145,9 @@ def remove_gitignore_line(gitignore_file: Path, removed_set: set):
         return
     line_list = gitignore_file.read_text(encoding='utf8').rstrip('\n').split('\n')
     line_list = [x for x in line_list if x.strip().strip('/') not in removed_set]
-    with open(gitignore_file, 'w', encoding='utf8', newline='\n') as f:
+    with open(gitignore_file, 'r+', encoding='utf8', newline='\n') as f:
         f.write('\n'.join(line_list) + '\n')
+        f.truncate()
 
 
 def stage(target_path: Path, file_list: list, removed_list: list, gitlink_dict: dict):
