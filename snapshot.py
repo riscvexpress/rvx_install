@@ -181,8 +181,14 @@ def stage(target_path: Path, file_list: list, removed_list: list, gitlink_dict: 
         pathspec = '\0'.join(x.relative_to(target_path).as_posix() for x in removed_list)
         subprocess.run(['git', 'rm', '-r', '-q', '-f', '--cached', '--ignore-unmatch', '--pathspec-from-file=-', '--pathspec-file-nul'],
                        cwd=target_path, input=pathspec.encode('utf8'), check=True)
-    pathspec = '\0'.join(x.relative_to(target_path).as_posix() for x in file_list)
-    subprocess.run(['git', '-c', 'core.safecrlf=false', 'add', '-f', '--pathspec-from-file=-', '--pathspec-file-nul'],
+    path_list = [x.relative_to(target_path).as_posix() for x in file_list]
+    result = subprocess.run(['git', 'check-ignore', '-z', '--stdin'], cwd=target_path, input='\0'.join(path_list).encode('utf8'),
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    ignored_set = {x for x in result.stdout.decode('utf8').split('\0') if x}
+    for path in sorted(ignored_set):
+        print(f'[WARNING] {path} is ignored by .gitignore: it is NOT staged')
+    pathspec = '\0'.join(x for x in path_list if x not in ignored_set)
+    subprocess.run(['git', '-c', 'core.safecrlf=false', 'add', '--pathspec-from-file=-', '--pathspec-file-nul'],
                    cwd=target_path, input=pathspec.encode('utf8'), check=True)
     for path, commit in gitlink_dict.items():
         subprocess.run(['git', 'update-index', '--add', '--cacheinfo', f'160000,{commit},{path}'], cwd=target_path, check=True)
@@ -222,16 +228,26 @@ def snapshot(target_path: Path, vendor: bool):
     staged_list = copy_file_list(home_path, target_path, get_top_file_list(home_path))
     # without --vendor, a module with url or a submodule is NOT a part of the release repository
     url_name_set = {strip_os_suffix(x[0]) for x in read_module_list(home_path / INFO_FILE) if x[2]}
+    local_name_set = set()
+    if old_info_contents is not None and not vendor:
+        old_root = ET.fromstring(old_info_contents)
+        local_name_set = {strip_os_suffix(x) for x in get_declared_name_list(old_root) if not get_value(old_root, f'{x}.url')} & url_name_set
     source_gitlink_dict = {} if vendor else get_gitlink_dict(home_path)
     gitlink_dict = {}
     snapshot_entry_list = [('snapshot', [('taken', datetime.datetime.now().strftime('%Y-%m-%d-%H-%M')), ('source', home_path.as_posix())] + get_git_info(home_path))]
     removed_list = []
     copied_name_list = []
     copied_dir_list = []
+    for name, module_path in module_list:
+        source = module_path.relative_to(home_path).as_posix() if is_under(module_path, home_path) else module_path.as_posix()
+        snapshot_entry_list.append((name, [('source', source)] + get_git_info(module_path)))
     rvx_path_list = [x for name, x in module_list if name.startswith('rvx_')]
     for name, module_path in module_list:
         # an rvx_ module is copied as a whole, so a non-rvx_ module in it is copied with it
         if not name.startswith('rvx_') and any(is_under(module_path, x) for x in rvx_path_list):
+            continue
+        if strip_os_suffix(name) in local_name_set:
+            print(f'{name} has no url in {target_path / INFO_FILE}: it is NOT copied')
             continue
         if vendor:
             dst_path = target_path / get_vendor_dir(name)
@@ -268,8 +284,6 @@ def snapshot(target_path: Path, vendor: bool):
             staged_list += [dst_path / x for x in tracked_list if dst_path / x in copied_set]
         copied_name_list.append(name)
         copied_dir_list.append(dst_path)
-        source = module_path.relative_to(home_path).as_posix() if is_under(module_path, home_path) else module_path.as_posix()
-        snapshot_entry_list.append((name, [('source', source)] + get_git_info(module_path)))
 
     if vendor:
         # a copied module is local, so it is declared with .path (except rvx_install and rvx_util)
