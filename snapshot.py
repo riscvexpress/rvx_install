@@ -14,19 +14,22 @@
 # ****************************************************************************
 
 import argparse
+import datetime
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from xml.sax.saxutils import escape
+import xml.etree.ElementTree as ET
 
-from install import HOME_PATH, get_module_list
-from rvx_module import FIXED_NAME_SET, get_path_var, git_output, read_config_path, read_module_list, remove_path, strip_os_suffix
+from install import HOME_PATH, get_module_list, set_info_value
+from rvx_module import FIXED_NAME_SET, get_declared_name_list, get_path_var, get_value, git_output, is_branch, normalize_url, read_config_path, read_module_list, remove_path, strip_os_suffix
 
 INFO_FILE = 'rvx_version_info.xml'
-LOCK_INFO_FILE = 'rvx_version_lock.xml'
-GENERATED_FILE_SET = {'rvx_config_path.mh', 'rvx_config_python.mh', 'rvx_setup.sh', LOCK_INFO_FILE}
+OLD_LOCK_INFO_FILE = 'rvx_version_lock.xml'
+SNAPSHOT_INFO_FILE = 'rvx_snapshot_info.xml'
+GENERATED_FILE_SET = {'rvx_config_path.mh', 'rvx_config_python.mh', 'rvx_setup.sh', OLD_LOCK_INFO_FILE, SNAPSHOT_INFO_FILE}
 
 
 def get_vendor_dir(name: str):
@@ -120,11 +123,14 @@ def get_top_file_list(home_path: Path):
 def get_git_info(module_path: Path):
     if not (module_path / '.git').exists():
         return []
-    if git_output('status', '--porcelain', cwd=module_path):
-        print(f'[WARNING] {module_path} has uncommitted changes: they are included but NOT recorded')
+    is_modified = bool(git_output('status', '--porcelain', cwd=module_path))
+    if is_modified:
+        print(f'[WARNING] {module_path} has uncommitted changes: they are included and recorded as modified')
     return [('url', git_output('remote', 'get-url', 'origin', cwd=module_path)),
+            ('branch', git_output('branch', '--show-current', cwd=module_path)),
             ('commit', git_output('rev-parse', '--short=7', 'HEAD', cwd=module_path)),
-            ('date', git_output('log', '-1', '--date=format:%Y-%m-%d-%H-%M', '--format=%cd', cwd=module_path))]
+            ('date', git_output('log', '-1', '--date=format:%Y-%m-%d-%H-%M', '--format=%cd', cwd=module_path)),
+            ('modified', 'yes' if is_modified else 'no')]
 
 
 def write_info_file(info_file: Path, entry_list: list):
@@ -137,6 +143,23 @@ def write_info_file(info_file: Path, entry_list: list):
     line_list.append('</version_info>')
     with open(info_file, 'w', encoding='utf8', newline='\n') as f:
         f.write('\n'.join(line_list) + '\n')
+    return info_file
+
+
+def update_info_file(info_file: Path, old_contents: str, entry_list: list):
+    root = ET.fromstring(old_contents)
+    entry_dict = {strip_os_suffix(name): dict(info_list) for name, info_list in entry_list}
+    contents = old_contents
+    for name in get_declared_name_list(root):
+        info = entry_dict.get(strip_os_suffix(name), {})
+        url = get_value(root, f'{name}.url')
+        commit = get_value(root, f'{name}.commit')
+        if not url or not info.get('url') or normalize_url(url) != normalize_url(info['url']) or (commit and is_branch(commit)):
+            continue
+        contents = set_info_value(contents, name, [('url', url), ('commit', info['commit']), ('date', info['date'])])
+        print(f'{name} is updated to {info["commit"]} in {info_file.name}')
+    with open(info_file, 'w', encoding='utf8', newline='\n') as f:
+        f.write(contents)
     return info_file
 
 
@@ -192,13 +215,16 @@ def snapshot(target_path: Path, vendor: bool):
         assert not is_under(target_path, module_path), f'{target_path} is in {name} ({module_path})'
     assert not target_path.exists() or target_path.is_dir(), f'{target_path} is NOT a directory'
     target_path.mkdir(parents=True, exist_ok=True)
+    old_info_contents = None
+    if (target_path / SNAPSHOT_INFO_FILE).is_file() and (target_path / INFO_FILE).is_file():
+        old_info_contents = (target_path / INFO_FILE).read_text(encoding='utf8')
 
     staged_list = copy_file_list(home_path, target_path, get_top_file_list(home_path))
     # without --vendor, a module with url or a submodule is NOT a part of the release repository
     url_name_set = {strip_os_suffix(x[0]) for x in read_module_list(home_path / INFO_FILE) if x[2]}
     source_gitlink_dict = {} if vendor else get_gitlink_dict(home_path)
     gitlink_dict = {}
-    lock_entry_list = []
+    snapshot_entry_list = [('snapshot', [('taken', datetime.datetime.now().strftime('%Y-%m-%d-%H-%M')), ('source', home_path.as_posix())] + get_git_info(home_path))]
     removed_list = []
     copied_name_list = []
     copied_dir_list = []
@@ -242,16 +268,14 @@ def snapshot(target_path: Path, vendor: bool):
             staged_list += [dst_path / x for x in tracked_list if dst_path / x in copied_set]
         copied_name_list.append(name)
         copied_dir_list.append(dst_path)
-        if vendor:
-            source = module_path.relative_to(home_path).as_posix() if is_under(module_path, home_path) else module_path.as_posix()
-            lock_entry_list.append((name, [('source', source)] + get_git_info(module_path)))
+        source = module_path.relative_to(home_path).as_posix() if is_under(module_path, home_path) else module_path.as_posix()
+        snapshot_entry_list.append((name, [('source', source)] + get_git_info(module_path)))
 
     if vendor:
         # a copied module is local, so it is declared with .path (except rvx_install and rvx_util)
         info_entry_list = [(name, [('path', get_vendor_dir(name))] if name in copied_name_list and name not in FIXED_NAME_SET else [])
                            for name, _ in module_list]
         staged_list.append(write_info_file(target_path / INFO_FILE, info_entry_list))
-        staged_list.append(write_info_file(target_path / LOCK_INFO_FILE, lock_entry_list))
         removed_set = {get_vendor_dir(x) for x in copied_name_list}
         removed_set |= {x.relative_to(home_path).as_posix() for name, x in module_list
                         if name in copied_name_list and is_under(x, home_path)}
@@ -271,6 +295,12 @@ def snapshot(target_path: Path, vendor: bool):
         for section in sorted({x.split(' ', 1)[0].rsplit('.', 1)[0] for x in
                                git_output('config', '--local', '--get-regexp', r'^submodule\.', cwd=target_path).split('\n') if x}):
             subprocess.run(['git', 'config', '--local', '--remove-section', section], cwd=target_path, check=True)
+    if os.path.lexists(target_path / OLD_LOCK_INFO_FILE):
+        remove_path(target_path / OLD_LOCK_INFO_FILE)
+        removed_list.append(target_path / OLD_LOCK_INFO_FILE)
+    staged_list.append(write_info_file(target_path / SNAPSHOT_INFO_FILE, snapshot_entry_list))
+    if old_info_contents is not None:
+        staged_list.append(update_info_file(target_path / INFO_FILE, old_info_contents, snapshot_entry_list))
     stage(target_path, sorted(set(staged_list)), removed_list, gitlink_dict)
     print(f'snapshot is taken in {target_path} (staged, NOT committed)')
 
@@ -278,6 +308,6 @@ def snapshot(target_path: Path, vendor: bool):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Take a snapshot of the modules listed in rvx_version_info.xml')
     parser.add_argument('target', help='target directory')
-    parser.add_argument('--vendor', action='store_true', help='put every module in target/<name without rvx_> (except rvx_install and rvx_util) and record its commit in rvx_version_lock.xml')
+    parser.add_argument('--vendor', action='store_true', help='put every module in target/<name without rvx_> (except rvx_install and rvx_util) ')
     args = parser.parse_args()
     snapshot(Path(args.target).absolute(), args.vendor)

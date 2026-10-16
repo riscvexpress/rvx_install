@@ -522,6 +522,19 @@ def cmd_setup_modules():
     return 0
 
 
+def set_info_value(contents, name, info_list):
+    previous_tag = '{0}.url'.format(name)
+    for key, value in info_list:
+        tag = '{0}.{1}'.format(name, key)
+        line = '<{0}>{1}</{0}>'.format(tag, value)
+        if re.search(r'<{0}>[^<]*</{0}>'.format(re.escape(tag)), contents):
+            contents = re.sub(r'<{0}>[^<]*</{0}>'.format(re.escape(tag)), lambda x: line, contents)
+        else:
+            contents = re.sub(r'^(\s*)(<{0}>[^<]*</{0}>)$'.format(re.escape(previous_tag)), lambda x: '{0}{1}\n{0}{2}'.format(x.group(1), x.group(2), line), contents, count=1, flags=re.M)
+        previous_tag = tag
+    return contents
+
+
 def cmd_update_version_info():
     info_file = os.path.join(HOME_PATH, 'rvx_version_info.xml')
     with open(info_file, encoding='utf8') as f:
@@ -542,15 +555,7 @@ def cmd_update_version_info():
         info_list = (('url', url),
                      ('commit', git_output('rev-parse', '--short=7', 'HEAD', cwd=module_path)),
                      ('date', git_output('log', '-1', '--date=format:%Y-%m-%d-%H-%M', '--format=%cd', cwd=module_path)))
-        previous_tag = '{0}.url'.format(name)
-        for key, value in info_list:
-            tag = '{0}.{1}'.format(name, key)
-            line = '<{0}>{1}</{0}>'.format(tag, value)
-            if re.search(r'<{0}>[^<]*</{0}>'.format(re.escape(tag)), contents):
-                contents = re.sub(r'<{0}>[^<]*</{0}>'.format(re.escape(tag)), lambda x: line, contents)
-            else:
-                contents = re.sub(r'^(\s*)(<{0}>[^<]*</{0}>)$'.format(re.escape(previous_tag)), lambda x: '{0}{1}\n{0}{2}'.format(x.group(1), x.group(2), line), contents, count=1, flags=re.M)
-            previous_tag = tag
+        contents = set_info_value(contents, name, info_list)
         new_commit = info_list[1][1]
         # the commit alone does NOT tell which branch it is from
         branch = git_output('branch', '--show-current', cwd=module_path) or 'detached'
