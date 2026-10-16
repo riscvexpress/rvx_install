@@ -23,7 +23,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 import xml.etree.ElementTree as ET
 
-from install import HOME_PATH, get_module_list, set_info_value
+from install import HOME_PATH, generate_gitignore, get_gitignore_generated_line_list, get_module_list, set_info_value
 from rvx_module import FIXED_NAME_SET, get_declared_name_list, get_path_var, get_value, git_output, is_branch, normalize_url, read_config_path, read_module_list, remove_path, strip_os_suffix
 
 INFO_FILE = 'rvx_version_info.xml'
@@ -226,6 +226,8 @@ def snapshot(target_path: Path, vendor: bool):
         old_info_contents = (target_path / INFO_FILE).read_text(encoding='utf8')
 
     staged_list = copy_file_list(home_path, target_path, get_top_file_list(home_path))
+    generate_gitignore(target_path / '.gitignore', [], get_gitignore_generated_line_list())
+    staged_list.append(target_path / '.gitignore')
     # without --vendor, a module with url or a submodule is NOT a part of the release repository
     url_name_set = {strip_os_suffix(x[0]) for x in read_module_list(home_path / INFO_FILE) if x[2]}
     local_name_set = set()

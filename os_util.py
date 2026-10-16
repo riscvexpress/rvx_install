@@ -19,12 +19,13 @@
 import platform
 import os
 import sys
+import time
 import subprocess
 import shutil
 import distro
 import stat
 
-from urllib import request
+from urllib import error, request
 from filecmp import cmp
 from pathlib import Path
 
@@ -253,17 +254,64 @@ def get_path_from_os_env(os_var_name: str, default_value=None, asserts_when_miss
     return x
 
 
-def download_url(url: str, output_dir: Path = None, output_file=None):
+def print_download_progress(size: int, total: int, start_size: int, start_time: float, is_done: bool = False):
+    speed = (size - start_size) / 1e6 / max(time.time() - start_time, 1e-3)
+    text = f'{size / 1e6:.1f}' + (f'/{total / 1e6:.1f} MB ({size * 100 // total}%)' if total else ' MB') + f', {speed:.1f} MB/s'
+    if sys.stdout.isatty():
+        print(f'\r  {text}   ', end='\n' if is_done else '', flush=True)
+    else:
+        print(f'  {text}', flush=True)
+
+
+def download_url(url: str, output_dir: Path = None, output_file=None, retry_count: int = 5, timeout: int = 30):
     assert (not output_dir) or (not output_file)
     assert not (output_dir and output_file)
 
     if output_file:
-        result_file = output_file
+        result_file = Path(output_file)
     else:
         result_file = output_dir / url.split('/')[-1]
 
     assert result_file.parent.is_dir(), result_file
-    request.urlretrieve(url, result_file)
+    if result_file.exists():
+        result_file.unlink()
+    for retry_index in range(retry_count + 1):
+        size = result_file.stat().st_size if result_file.exists() else 0
+        try:
+            with request.urlopen(request.Request(url, headers={'Range': f'bytes={size}-'} if size else {}), timeout=timeout) as response:
+                if size and response.status != 206:
+                    size = 0
+                length = response.headers.get('Content-Length')
+                total = int(length) + size if length else 0
+                start_size = size
+                start_time = time.time()
+                print_time = start_time
+                with open(result_file, 'ab' if size else 'wb') as f:
+                    while True:
+                        chunk = response.read(1 << 20)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        size += len(chunk)
+                        if time.time() - print_time > (1 if sys.stdout.isatty() else 10):
+                            print_time = time.time()
+                            print_download_progress(size, total, start_size, start_time)
+                print_download_progress(size, total, start_size, start_time, True)
+            if total and size < total:
+                raise OSError(f'{size} of {total} bytes are received')
+            return
+        except error.HTTPError as e:
+            if e.code == 416 and size:
+                return
+            if e.code < 500 or retry_index == retry_count:
+                raise
+            message = str(e)
+        except (error.URLError, OSError) as e:
+            if retry_index == retry_count:
+                raise
+            message = str(e)
+        print(('\n' if sys.stdout.isatty() else '') + f'[WARNING] {message}: retry {retry_index + 1}/{retry_count}', flush=True)
+        time.sleep(2)
 
 
 def get_dir_list(path: Path):
