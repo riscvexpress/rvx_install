@@ -16,6 +16,7 @@
 import argparse
 import datetime
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -29,7 +30,7 @@ from rvx_module import FIXED_NAME_SET, get_declared_name_list, get_path_var, get
 INFO_FILE = 'rvx_version_info.xml'
 OLD_LOCK_INFO_FILE = 'rvx_version_lock.xml'
 SNAPSHOT_INFO_FILE = 'rvx_snapshot_info.xml'
-GENERATED_FILE_SET = {'rvx_config_path.mh', 'rvx_config_python.mh', 'rvx_setup.sh', OLD_LOCK_INFO_FILE, SNAPSHOT_INFO_FILE}
+GENERATED_FILE_SET = {'rvx_config_path.mh', 'rvx_config_repo.mh', 'rvx_config_python.mh', 'rvx_setup.sh', OLD_LOCK_INFO_FILE, SNAPSHOT_INFO_FILE}
 
 
 def get_vendor_dir(name: str):
@@ -110,6 +111,33 @@ def clone_submodule(module_path: Path, dst_path: Path, target_path: Path):
     return commit
 
 
+def read_gitmodules(gitmodules_file: Path):
+    # {name: [(key, value)]}
+    gitmodules_dict = {}
+    if not gitmodules_file.is_file():
+        return gitmodules_dict
+    for line in git_output('config', '-f', str(gitmodules_file), '--list', cwd=gitmodules_file.parent).split('\n'):
+        matched = re.match(r'^submodule\.(.+)\.([^.=]+)=(.*)$', line)
+        if matched:
+            gitmodules_dict.setdefault(matched.group(1), []).append((matched.group(2), matched.group(3)))
+    return gitmodules_dict
+
+
+def merge_gitmodules(gitmodules_file: Path, source_dict: dict, adds: bool):
+    source_path_set = {value for info_list in source_dict.values() for key, value in info_list if key == 'path'}
+    for name, info_list in read_gitmodules(gitmodules_file).items():
+        if name in source_dict or dict(info_list).get('path') in source_path_set:
+            subprocess.run(['git', 'config', '-f', str(gitmodules_file), '--remove-section', f'submodule.{name}'], check=True)
+    if adds:
+        for name, info_list in source_dict.items():
+            for key, value in info_list:
+                subprocess.run(['git', 'config', '-f', str(gitmodules_file), f'submodule.{name}.{key}', value], check=True)
+    if gitmodules_file.is_file() and not read_gitmodules(gitmodules_file):
+        print(f'{gitmodules_file.name} is removed')
+        gitmodules_file.unlink()
+    return gitmodules_file.is_file()
+
+
 def get_top_file_list(home_path: Path):
     result = subprocess.run(['git', 'ls-files', '-z'], cwd=home_path,
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -177,6 +205,7 @@ def stage(target_path: Path, file_list: list, removed_list: list, gitlink_dict: 
     if not (target_path / '.git').exists():
         subprocess.run(['git', 'init', '-q'], cwd=target_path, check=True)
     if removed_list:
+        subprocess.run(['git', 'add', '-A', '--', '.gitmodules'], cwd=target_path, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         # unstage the removed directories so that their deleted files are staged as deletions
         pathspec = '\0'.join(x.relative_to(target_path).as_posix() for x in removed_list)
         subprocess.run(['git', 'rm', '-r', '-q', '-f', '--cached', '--ignore-unmatch', '--pathspec-from-file=-', '--pathspec-file-nul'],
@@ -221,11 +250,17 @@ def snapshot(target_path: Path, vendor: bool):
         assert not is_under(target_path, module_path), f'{target_path} is in {name} ({module_path})'
     assert not target_path.exists() or target_path.is_dir(), f'{target_path} is NOT a directory'
     target_path.mkdir(parents=True, exist_ok=True)
+    removed_list = []
     old_info_contents = None
     if (target_path / SNAPSHOT_INFO_FILE).is_file() and (target_path / INFO_FILE).is_file():
         old_info_contents = (target_path / INFO_FILE).read_text(encoding='utf8')
 
-    staged_list = copy_file_list(home_path, target_path, get_top_file_list(home_path))
+    staged_list = copy_file_list(home_path, target_path, [x for x in get_top_file_list(home_path) if x.name != '.gitmodules'])
+    source_gitmodules_dict = read_gitmodules(home_path / '.gitmodules')
+    if merge_gitmodules(target_path / '.gitmodules', source_gitmodules_dict, not vendor):
+        staged_list.append(target_path / '.gitmodules')
+    else:
+        removed_list.append(target_path / '.gitmodules')
     generate_gitignore(target_path / '.gitignore', [], get_gitignore_generated_line_list())
     staged_list.append(target_path / '.gitignore')
     # without --vendor, a module with url or a submodule is NOT a part of the release repository
@@ -237,7 +272,6 @@ def snapshot(target_path: Path, vendor: bool):
     source_gitlink_dict = {} if vendor else get_gitlink_dict(home_path)
     gitlink_dict = {}
     snapshot_entry_list = [('snapshot', [('taken', datetime.datetime.now().strftime('%Y-%m-%d-%H-%M')), ('source', home_path.as_posix())] + get_git_info(home_path))]
-    removed_list = []
     copied_name_list = []
     copied_dir_list = []
     for name, module_path in module_list:
@@ -297,8 +331,8 @@ def snapshot(target_path: Path, vendor: bool):
                         if name in copied_name_list and is_under(x, home_path)}
         remove_gitignore_line(target_path / '.gitignore', removed_set)
         # every module is a part of the snapshot, so NOT a submodule anymore
-        gitmodules_list = [x for x in [target_path / '.gitmodules'] + [Path(root, '.gitmodules') for dir_path in copied_dir_list
-                                                                       for root, _, name_list in os.walk(dir_path) if '.gitmodules' in name_list]
+        gitmodules_list = [x for x in [Path(root, '.gitmodules') for dir_path in copied_dir_list
+                                       for root, _, name_list in os.walk(dir_path) if '.gitmodules' in name_list]
                            if os.path.lexists(x)]
         for gitmodules_file in gitmodules_list:
             print(f'{gitmodules_file.relative_to(target_path).as_posix()} is removed')
@@ -306,11 +340,11 @@ def snapshot(target_path: Path, vendor: bool):
         staged_list = [x for x in staged_list if x not in gitmodules_list]
         removed_list += gitmodules_list
         # the submodules registered by a previous snapshot without --vendor
-        if (target_path / '.git' / 'modules').is_dir():
-            remove_path(target_path / '.git' / 'modules')
-        for section in sorted({x.split(' ', 1)[0].rsplit('.', 1)[0] for x in
-                               git_output('config', '--local', '--get-regexp', r'^submodule\.', cwd=target_path).split('\n') if x}):
-            subprocess.run(['git', 'config', '--local', '--remove-section', section], cwd=target_path, check=True)
+        for name in source_gitmodules_dict:
+            if (target_path / '.git' / 'modules' / name).exists():
+                remove_path(target_path / '.git' / 'modules' / name)
+            if git_output('config', '--local', '--get-regexp', rf'^submodule\.{re.escape(name)}\.', cwd=target_path):
+                subprocess.run(['git', 'config', '--local', '--remove-section', f'submodule.{name}'], cwd=target_path, check=True)
     if os.path.lexists(target_path / OLD_LOCK_INFO_FILE):
         remove_path(target_path / OLD_LOCK_INFO_FILE)
         removed_list.append(target_path / OLD_LOCK_INFO_FILE)

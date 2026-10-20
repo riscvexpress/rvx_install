@@ -60,7 +60,7 @@ else
                       ls /usr/bin/python3.* /usr/local/bin/python3.* /opt/*/bin/python3.* 2>/dev/null | grep -E '/python3\.[0-9]+$$'
 endif
 
-setup_python:
+setup_python_manual:
 	@cur=$$(sed -n 's/^\(export \)\{0,1\}PYTHON3_CMD=//p' "${PYTHON_CONFIG_FILE}" 2>/dev/null | tr -d '\r'); \
 	{ \
 	  [ -x "${PYTHON_VENV_CMD}" ] && echo "${PYTHON_VENV_CMD}"; \
@@ -84,7 +84,18 @@ setup_python:
 	  cat "${PYTHON_CONFIG_FILE}"; \
 	}
 
-.PHONY: setup_python
+PYTHON_PARENT_CONFIG_FILE?=$(abspath ${CURDIR}/..)/rvx_config_python.mh
+
+setup_python:
+	@if [ -f "${PYTHON_PARENT_CONFIG_FILE}" ]; then \
+	  cp -f "${PYTHON_PARENT_CONFIG_FILE}" "${PYTHON_CONFIG_FILE}"; \
+	  echo "copied ${PYTHON_PARENT_CONFIG_FILE}"; \
+	else \
+	  ${MAKE} --no-print-directory install_python || exit 1; \
+	fi
+	@cat "${PYTHON_CONFIG_FILE}"
+
+.PHONY: setup_python_manual setup_python
 
 ## check python ##
 

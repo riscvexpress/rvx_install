@@ -67,7 +67,7 @@ update:
 # clean #
 #########
 
-CLEAN_FILE_LIST = rvx_config_path.mh rvx_config_python.mh rvx_setup.sh .rvx_path_config
+CLEAN_FILE_LIST = rvx_config_path.mh rvx_config_repo.mh rvx_config_python.mh rvx_setup.sh .rvx_path_config
 
 clean:
 	@${PYTHON3_CMD} -c "import glob, os; [(print('removed', x), os.remove(x)) for x in '${CLEAN_FILE_LIST}'.split() + glob.glob('rvx_*.log') if os.path.isfile(x)]"

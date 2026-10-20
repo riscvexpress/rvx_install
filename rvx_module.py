@@ -26,6 +26,7 @@ from pathlib import Path
 
 HOME_PATH = Path(__file__).resolve().parent.parent
 CONFIG_PATH_FILE = HOME_PATH / 'rvx_config_path.mh'
+CONFIG_REPO_FILE = HOME_PATH / 'rvx_config_repo.mh'
 # Makefile and rvx_init.mh refer to ./rvx_install and ./rvx_util directly, so they can NOT be anywhere else
 FIXED_NAME_SET = {'rvx_install', 'rvx_util'}
 # a standalone python (e.g. by uv) looks for /etc/ssl/cert.pem, which RHEL does NOT have
@@ -60,7 +61,9 @@ def strip_os_suffix(name: str):
 
 
 def get_path_var(name: str):
-    return f'{strip_os_suffix(name).upper()}_HOME'
+    path_var = f'{strip_os_suffix(name).upper()}_HOME'
+    assert re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', path_var), f'{path_var} is NOT a valid variable name: rename {name} in rvx_version_info.xml (e.g. use _ instead of -)'
+    return path_var
 
 
 def get_env_path(name: str):

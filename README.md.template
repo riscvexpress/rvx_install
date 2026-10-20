@@ -27,8 +27,7 @@ Run the following in the top directory of this repository.
 ```sh
 git submodule init    # register the submodules
 git submodule update  # fetch the submodules (e.g. rvx_install)
-make install_python   # install Python 3.9 into ./.rvx_venv (recommended)
-make setup_python     # select the Python to use
+make setup_python     # copy ../rvx_config_python.mh, or install Python 3.9 into ./.rvx_venv
 make check_python     # confirm the selected Python
 make install          # download and set up the RVX modules
 ```

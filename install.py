@@ -25,7 +25,7 @@ from pathlib import Path
 
 import xml.etree.ElementTree as ET
 
-from rvx_module import CONFIG_PATH_FILE, FIXED_NAME_SET, find_module, get_declared_name_list, get_default_branch, get_env_path, get_path_var, get_value, is_branch, is_for_this_os, post_setup_module, read_config_path, read_module_list, remove_path, setup_module, SSL_CERT_FILE, strip_os_suffix, git_output
+from rvx_module import CONFIG_PATH_FILE, CONFIG_REPO_FILE, FIXED_NAME_SET, find_module, get_declared_name_list, get_default_branch, get_env_path, get_path_var, get_value, is_branch, is_for_this_os, post_setup_module, read_config_path, read_module_list, remove_path, setup_module, SSL_CERT_FILE, strip_os_suffix, git_output
 
 MIN_PYTHON_VERSION = (3, 8)
 MIN_MAKE_VERSION = (3, 81)
@@ -360,8 +360,20 @@ def generate_config_path(output_file):
     print('generated {0}'.format(output_file))
 
 
+def generate_config_repo(output_file):
+    _, url_name_set, _ = get_name_list()
+    repo_list = []
+    for name, _, _, _ in get_module_list():
+        if name in url_name_set and strip_os_suffix(name) not in repo_list:
+            repo_list.append(strip_os_suffix(name))
+    with open(output_file, 'w', encoding='utf8', newline='\n') as f:
+        f.write('RVX_REPO_LIST = {0}\n'.format(' '.join(repo_list)).replace(' \n', '\n'))
+    print('generated {0}'.format(output_file))
+
+
 def cmd_path():
     generate_config_path(CONFIG_PATH_FILE)
+    generate_config_repo(CONFIG_REPO_FILE)
     return 0
 
 
@@ -370,7 +382,7 @@ GITIGNORE_LOCAL_MARKER = '# local'
 
 
 def get_gitignore_generated_line_list():
-    line_list = ['rvx_config_path.mh']
+    line_list = ['rvx_config_path.mh', 'rvx_config_repo.mh']
     for _, path, url, _ in read_module_list(Path(HOME_PATH) / 'rvx_version_info.xml'):
         # a module without url is local: it is left to the local section
         if url and path + '/' not in line_list:
@@ -521,12 +533,12 @@ def cmd_setup_modules():
     info_file = Path(HOME_PATH) / 'rvx_version_info.xml'
     module_list = read_module_list(info_file)
     declared_set = {strip_os_suffix(x) for x in get_declared_name_list(ET.parse(info_file).getroot())}
-    for name in os.environ.get('RVX_MODULE_LIST', '').split():
+    for name in os.environ.get('RVX_INSTALL_MODULE_LIST', '').split():
         module = find_module(module_list, name)
         if module:
             setup_module(*module)
         elif strip_os_suffix(name) not in declared_set:
-            print(f'[WARNING] {name} in RVX_MODULE_LIST is NOT declared in {info_file.name}', flush=True)
+            print(f'[WARNING] {name} in RVX_INSTALL_MODULE_LIST is NOT declared in {info_file.name}', flush=True)
         else:
             # declared without url (e.g. <rvx_synthesizer/>): local, found by make path
             print(f'## {name} (local)', flush=True)
@@ -666,7 +678,7 @@ def cmd_install_others():
 CMD_DICT['cmd_list'] = (cmd_cmd_list, 'show this list')
 CMD_DICT['install_others'] = (cmd_install_others, 'run every install_* command')
 CMD_DICT['install_pip_package'] = (cmd_install_pip_package, 'install pip packages')
-CMD_DICT['path'] = (cmd_path, 'generate rvx_config_path.mh from rvx_version_info.xml')
+CMD_DICT['path'] = (cmd_path, 'generate rvx_config_path.mh and rvx_config_repo.mh from rvx_version_info.xml')
 CMD_DICT['setup_all'] = (cmd_setup_all, 'run every setup_* command')
 CMD_DICT['pull_modules'] = (cmd_pull_modules, 'check out the default branch of each module with url and pull it')
 CMD_DICT['remove_modules'] = (cmd_remove_modules, 'remove the modules with url, except the ones with uncommitted changes or unpushed commits')
@@ -676,7 +688,7 @@ CMD_DICT['setup_misc'] = (cmd_setup_misc, 'set RVX_RELEASE_HOME (setx on windows
 CMD_DICT['setup_gitignore'] = (cmd_setup_gitignore, 'generate .gitignore from rvx_install/gitignore.template and rvx_version_info.xml')
 CMD_DICT['setup_readme'] = (cmd_setup_readme, 'generate README.md from rvx_install/README.md.template')
 CMD_DICT['setup_init'] = (cmd_setup_init, 'overwrite rvx_init.mh with rvx_install/rvx_init.mh')
-CMD_DICT['setup_modules'] = (cmd_setup_modules, 'clone or update the modules in RVX_MODULE_LIST')
+CMD_DICT['setup_modules'] = (cmd_setup_modules, 'clone or update the modules in RVX_INSTALL_MODULE_LIST')
 CMD_DICT['setup_udev'] = (cmd_setup_udev, 'copy udev rules to /etc/udev/rules.d and reload them (linux only)')
 CMD_DICT['check_install'] = (cmd_check_install, 'run every check_* command')
 CMD_DICT['check_env'] = (cmd_check_env, 'check python, pip and tools')
