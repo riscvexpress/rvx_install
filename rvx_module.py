@@ -218,6 +218,10 @@ def setup_module(name: str, path: str, url: str, commit: str):
         print(f'## {name} (env: {get_path_var(name)}={env_path})', flush=True)
     else:
         update_module(name, path, url, commit)
+        if url and strip_os_suffix(name) == 'xarvis' and (HOME_PATH / path).parent == HOME_PATH:
+            make('setup_python', cwd=HOME_PATH / path)
+            make('preinstall', cwd=HOME_PATH / path)
+            make('install', cwd=HOME_PATH / path)
     post_setup_module(name)
 
 

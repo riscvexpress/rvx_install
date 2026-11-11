@@ -130,7 +130,7 @@ def cmd_check_env(checker):
 # install_pip_package #
 #######################
 
-PIP_PACKAGE_LIST = ['distro', 'pyelftools']
+PIP_PACKAGE_LIST = ['distro', 'pyelftools', 'littlefs-python']
 
 
 def cmd_install_pip_package():

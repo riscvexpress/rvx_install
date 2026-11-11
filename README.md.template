@@ -41,4 +41,12 @@ If `make install` fails with `No rule to make target 'install'`, the submodules 
 
 The installation manual is also available on the homepage.
 
+## Update
+
+After pulling this repository, run the following in the top directory to bring the submodules and the RVX modules up to date.
+
+```sh
+make update
+```
+
 <!-- local -->
