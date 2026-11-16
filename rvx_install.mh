@@ -57,6 +57,7 @@ snapshot:
 install: install_pip install_others path setup_all
 
 update:
+	git pull --ff-only
 	-git submodule init
 	-git submodule update
 	make install

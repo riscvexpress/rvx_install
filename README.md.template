@@ -43,7 +43,7 @@ The installation manual is also available on the homepage.
 
 ## Update
 
-After pulling this repository, run the following in the top directory to bring the submodules and the RVX modules up to date.
+Run the following in the top directory to pull the current branch and bring the submodules and the RVX modules up to date.
 
 ```sh
 make update
