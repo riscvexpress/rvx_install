@@ -25,7 +25,7 @@ from pathlib import Path
 
 import xml.etree.ElementTree as ET
 
-from rvx_module import CONFIG_PATH_FILE, CONFIG_REPO_FILE, FIXED_NAME_SET, find_module, get_declared_name_list, get_default_branch, get_env_path, get_path_var, get_value, is_branch, is_for_this_os, post_setup_module, read_config_path, read_module_list, remove_path, setup_module, SSL_CERT_FILE, strip_os_suffix, git_output
+from rvx_module import CONFIG_PATH_FILE, CONFIG_REPO_FILE, FIXED_NAME_SET, find_module, get_shared_path, get_declared_name_list, get_default_branch, get_env_path, get_path_var, get_value, is_branch, is_for_this_os, post_setup_module, read_config_path, read_module_list, remove_path, setup_module, SSL_CERT_FILE, strip_os_suffix, git_output
 
 MIN_PYTHON_VERSION = (3, 8)
 MIN_MAKE_VERSION = (3, 81)
@@ -297,6 +297,8 @@ def find_xml_path(name, submodule_path_set, url_name_set, explicit_path_dict):
     if name in explicit_path_dict:
         return to_abs_path(os.path.join(HOME_PATH, explicit_path_dict[name])), '.path'
     # the directory named as it is, if it is a submodule or cloned from url (even before cloned)
+    if name in url_name_set and get_shared_path(name):
+        return to_abs_path(os.path.join(HOME_PATH, get_shared_path(name))), 'shared'
     if name in submodule_path_set:
         return to_abs_path(os.path.join(HOME_PATH, name)), 'submodule'
     if name in url_name_set:
@@ -385,7 +387,7 @@ def get_gitignore_generated_line_list():
     line_list = ['rvx_config_path.mh', 'rvx_config_repo.mh']
     for _, path, url, _ in read_module_list(Path(HOME_PATH) / 'rvx_version_info.xml'):
         # a module without url is local: it is left to the local section
-        if url and path + '/' not in line_list:
+        if url and not path.startswith('../') and path + '/' not in line_list:
             line_list.append(path + '/')
     return line_list
 
@@ -428,18 +430,23 @@ def cmd_setup_readme():
     output_file = os.path.join(HOME_PATH, 'README.md')
     with open(template_file, encoding='utf8') as f:
         line_list = f.read().rstrip('\n').split('\n')
-    if README_LOCAL_MARKER not in line_list:
-        line_list += ['', README_LOCAL_MARKER]
+    marker_index_list = [i for i, x in enumerate(line_list) if x == README_LOCAL_MARKER]
+    assert len(marker_index_list) == 2, '{0} has to have two {1}'.format(template_file, README_LOCAL_MARKER)
+    head_line_list = line_list[:marker_index_list[0]]
+    body_line_list = line_list[marker_index_list[0]:marker_index_list[1] + 1]
+    tail_line_list = line_list[marker_index_list[1] + 1:]
     if os.path.isfile(output_file):
         with open(output_file, encoding='utf8') as f:
             old_line_list = f.read().rstrip('\n').split('\n')
-        if README_LOCAL_MARKER in old_line_list:
-            local_line_list = old_line_list[old_line_list.index(README_LOCAL_MARKER) + 1:]
-        elif '\n'.join(old_line_list).strip() != '\n'.join(line_list[:line_list.index(README_LOCAL_MARKER)]).strip():
-            local_line_list = [''] + old_line_list
-        else:
-            local_line_list = []
-        line_list = line_list[:line_list.index(README_LOCAL_MARKER) + 1] + local_line_list
+        old_marker_index_list = [i for i, x in enumerate(old_line_list) if x == README_LOCAL_MARKER]
+        if len(old_marker_index_list) >= 2:
+            head_line_list = old_line_list[:old_marker_index_list[0]]
+            tail_line_list = old_line_list[old_marker_index_list[-1] + 1:]
+        elif len(old_marker_index_list) == 1:
+            tail_line_list = old_line_list[old_marker_index_list[0] + 1:]
+        elif '\n'.join(old_line_list).strip() != '\n'.join(x for x in line_list if x != README_LOCAL_MARKER).strip():
+            tail_line_list = tail_line_list + [''] + old_line_list
+    line_list = head_line_list + body_line_list + tail_line_list
     with open(output_file, 'r+' if os.path.isfile(output_file) else 'w', encoding='utf8', newline='\n') as f:
         f.write('\n'.join(line_list) + '\n')
         f.truncate()
@@ -600,6 +607,9 @@ def cmd_pull_modules():
         if not (module_path / '.git').exists():
             print('{0} (NOT cloned, skipped)'.format(name))
             continue
+        if path == get_shared_path(name, commit):
+            print('{0} (shared, skipped: change its commit in rvx_version_info.xml)'.format(name))
+            continue
         # a branch given as .commit comes first
         branch = commit if is_branch(commit) else get_default_branch(module_path)
         if not branch:
@@ -619,15 +629,24 @@ def cmd_pull_modules():
                 break
         else:
             new_commit = git_output('rev-parse', '--short=7', 'HEAD', cwd=module_path)
+            if new_commit != old_commit and (module_path / '.gitmodules').is_file():
+                result = subprocess.run(['git', 'submodule', 'update', '-q', '--init', '--recursive'], cwd=module_path, stdin=subprocess.DEVNULL)
+                if result.returncode:
+                    print('[FAIL] {0}: git submodule update --init --recursive ({1})'.format(name, module_path))
+                    returncode = 1
+                    continue
             print('{0} ({1})'.format(name, 'no update' if new_commit == old_commit else 'updated'))
     return returncode
 
 
 def cmd_remove_modules():
     returncode = 0
-    for name, path, url, _ in read_module_list(Path(HOME_PATH) / 'rvx_version_info.xml'):
+    for name, path, url, commit in read_module_list(Path(HOME_PATH) / 'rvx_version_info.xml'):
         module_path = Path(HOME_PATH) / path
         if not url or get_env_path(name) or strip_os_suffix(name) == 'rvx_install' or not os.path.lexists(module_path):
+            continue
+        if path == get_shared_path(name, commit):
+            print('{0} is NOT removed: it is shared by the repositories in {1}'.format(module_path.resolve(), module_path.resolve().parent))
             continue
         if (module_path / '.git').exists():
             if git_output('status', '--porcelain', cwd=module_path):

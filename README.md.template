@@ -4,6 +4,8 @@
 
 [https://riscvexpress.github.io](https://riscvexpress.github.io)
 
+<!-- local -->
+
 ## Prerequisites
 
 ### Linux
@@ -19,6 +21,8 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
 scoop install git make
 ```
+
+On Windows 11, turn off Smart App Control (Windows Security > App & browser control > Smart App Control).
 
 ## Install
 

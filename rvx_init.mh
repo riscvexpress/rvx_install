@@ -21,6 +21,8 @@ RVX_UTIL_HOME?= ./rvx_util
 
 
 PYTHON3_VERSION_TO_INSTALL?=3.9.18
+PYTHON3_VERSION_MIN?=3.8
+PYTHON3_VERSION_MAX?=3.10
 PYTHON_VENV_DIR?=${CURDIR}/.rvx_venv
 
 ifeq ($(OS),Windows_NT)
@@ -44,11 +46,27 @@ else
 endif
 
 install_python: $(if $(wildcard ${UV_CMD}),,install_uv)
+	@v=$$("${PYTHON_VENV_CMD}" -c "import sys,platform;lo,hi=[tuple(map(int,x.split('.'))) for x in sys.argv[1:]];print(platform.python_version(),int(lo<=sys.version_info[:2]<=hi))" ${PYTHON3_VERSION_MIN} ${PYTHON3_VERSION_MAX} 2>/dev/null | tr -d '\r'); \
+	case "$$v" in \
+	  *" 1") \
+	    echo "${PYTHON_VENV_DIR} has python $${v% 1} already";; \
+	  *) \
+	    if [ -e "${PYTHON_VENV_DIR}" ]; then \
+	      echo "[FAIL] ${PYTHON_VENV_DIR} exists, but is NOT python ${PYTHON3_VERSION_MIN} ~ ${PYTHON3_VERSION_MAX}: run 'make reinstall_python'"; exit 1; \
+	    fi; \
+	    echo "${UV_CMD} python install ${PYTHON3_VERSION_TO_INSTALL}"; \
+	    ${UV_CMD} python install ${PYTHON3_VERSION_TO_INSTALL} || exit 1; \
+	    echo "${UV_CMD} venv --seed --python ${PYTHON3_VERSION_TO_INSTALL} ${PYTHON_VENV_DIR}"; \
+	    ${UV_CMD} venv --seed --python ${PYTHON3_VERSION_TO_INSTALL} ${PYTHON_VENV_DIR} || exit 1;; \
+	esac
+	@echo export PYTHON3_CMD=${PYTHON_VENV_CMD}>${PYTHON_CONFIG_FILE}
+
+reinstall_python: $(if $(wildcard ${UV_CMD}),,install_uv)
 	${UV_CMD} python install ${PYTHON3_VERSION_TO_INSTALL}
 	${UV_CMD} venv --seed --clear --python ${PYTHON3_VERSION_TO_INSTALL} ${PYTHON_VENV_DIR}
 	@echo export PYTHON3_CMD=${PYTHON_VENV_CMD}>${PYTHON_CONFIG_FILE}
 
-.PHONY: install_uv install_python
+.PHONY: install_uv install_python reinstall_python
 
 ## setup python ##
 
@@ -59,6 +77,8 @@ else
   PYTHON3_FIND_SCRIPT=which -a python3 python 2>/dev/null; \
                       ls /usr/bin/python3.* /usr/local/bin/python3.* /opt/*/bin/python3.* 2>/dev/null | grep -E '/python3\.[0-9]+$$'
 endif
+
+PYTHON_MANUAL_MARKER=\# setup_python_manual
 
 setup_python_manual:
 	@cur=$$(sed -n 's/^\(export \)\{0,1\}PYTHON3_CMD=//p' "${PYTHON_CONFIG_FILE}" 2>/dev/null | tr -d '\r'); \
@@ -79,23 +99,31 @@ setup_python_manual:
 	    if [ "$$p" = "$$cur" ]; then found=1; echo "export PYTHON3_CMD=$$p"; else echo "#export PYTHON3_CMD=$$p"; fi >> "$$tmp"; \
 	  done; \
 	  [ -n "$$cur" ] || { rm -f "$$tmp"; echo "python3 is NOT found, run 'make install_python' first"; exit 1; }; \
-	  { [ -n "$$found" ] || echo "export PYTHON3_CMD=$$cur"; cat "$$tmp"; } > "${PYTHON_CONFIG_FILE}"; \
+	  { echo "${PYTHON_MANUAL_MARKER}"; [ -n "$$found" ] || echo "export PYTHON3_CMD=$$cur"; cat "$$tmp"; } > "${PYTHON_CONFIG_FILE}"; \
 	  rm -f "$$tmp"; \
 	  cat "${PYTHON_CONFIG_FILE}"; \
 	}
 
-PYTHON_PARENT_CONFIG_FILE?=$(abspath ${CURDIR}/..)/rvx_config_python.mh
+PYTHON_PARENT_DIR?=$(abspath ${CURDIR}/..)
+
+setup_python_at_parent:
+	@echo "make setup_python in ${PYTHON_PARENT_DIR}"
+	@MAKEFLAGS= ${MAKE} --no-print-directory -C "${PYTHON_PARENT_DIR}" setup_python
 
 setup_python:
-	@if [ -f "${PYTHON_PARENT_CONFIG_FILE}" ]; then \
-	  cp -f "${PYTHON_PARENT_CONFIG_FILE}" "${PYTHON_CONFIG_FILE}"; \
-	  echo "copied ${PYTHON_PARENT_CONFIG_FILE}"; \
+	@if [ -z "${PYTHON_MANUAL_OVERRIDE}" ] && tr -d '\r' 2>/dev/null < "${PYTHON_CONFIG_FILE}" | grep -qx "${PYTHON_MANUAL_MARKER}"; then \
+	  echo "kept ${PYTHON_CONFIG_FILE}: it is set by setup_python_manual (run 'make setup_python PYTHON_MANUAL_OVERRIDE=1' to overwrite it)"; \
+	elif [ "${PYTHON_PARENT_DIR}" != "${CURDIR}" ] && \
+	  { MAKEFLAGS= ${MAKE} -q -C "${PYTHON_PARENT_DIR}" share_python >/dev/null 2>&1; [ $$? -ne 2 ]; }; then \
+	  ${MAKE} --no-print-directory setup_python_at_parent || exit 1; \
+	  echo "make share_python in ${PYTHON_PARENT_DIR}"; \
+	  MAKEFLAGS= ${MAKE} --no-print-directory -C "${PYTHON_PARENT_DIR}" share_python "PYTHON_SHARE_FILE=${PYTHON_CONFIG_FILE}" || exit 1; \
 	else \
 	  ${MAKE} --no-print-directory install_python || exit 1; \
 	fi
 	@cat "${PYTHON_CONFIG_FILE}"
 
-.PHONY: setup_python_manual setup_python
+.PHONY: setup_python_manual setup_python_at_parent setup_python
 
 ## check python ##
 

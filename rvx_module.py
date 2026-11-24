@@ -29,6 +29,9 @@ CONFIG_PATH_FILE = HOME_PATH / 'rvx_config_path.mh'
 CONFIG_REPO_FILE = HOME_PATH / 'rvx_config_repo.mh'
 # Makefile and rvx_init.mh refer to ./rvx_install and ./rvx_util directly, so they can NOT be anywhere else
 FIXED_NAME_SET = {'rvx_install', 'rvx_util'}
+SHARED_NAME_SET = {'rvx_binary', 'rvx_synthesizer'}
+SHARED_REPO_NAME = 'xarvis'
+SHARED_CLONE_SCRIPT = 'clone_rvx_module.py'
 # a standalone python (e.g. by uv) looks for /etc/ssl/cert.pem, which RHEL does NOT have
 SYSTEM_CA_FILE_LIST = ('/etc/pki/tls/certs/ca-bundle.crt', '/etc/ssl/certs/ca-certificates.crt', '/etc/ssl/cert.pem')
 
@@ -83,6 +86,70 @@ def get_declared_name_list(root):
     return name_list
 
 
+def get_shared_script():
+    script_file = HOME_PATH.parent / SHARED_CLONE_SCRIPT
+    try:
+        if not script_file.is_file() or not os.path.exists(HOME_PATH.parent / '.git'):
+            return None
+        url = normalize_url(git_output('remote', 'get-url', 'origin', cwd=HOME_PATH.parent))
+    except OSError:
+        return None
+    return script_file if url.split('/')[-1] == SHARED_REPO_NAME else None
+
+
+def run_shared_script(name: str, url: str, commit: str, path_only: bool, source_path: Path = None):
+    arg_list = [sys.executable, str(get_shared_script()), '-name', strip_os_suffix(name), '-commit', commit]
+    if not path_only:
+        arg_list += ['-url', url, '-user_path', str(HOME_PATH), '-user_url', git_output('remote', 'get-url', 'origin', cwd=HOME_PATH)]
+        arg_list += ['-source', str(source_path)] if source_path else []
+    else:
+        arg_list += ['-path_only']
+    result = subprocess.run(arg_list, stdout=subprocess.PIPE, universal_newlines=True)
+    if result.returncode != 0:
+        sys.exit(result.returncode)
+    return os.path.relpath(result.stdout.strip().splitlines()[-1], HOME_PATH).replace(os.sep, '/')
+
+
+SHARED_PATH_DICT = {}
+
+
+def get_shared_path(name: str, commit: str = None):
+    if strip_os_suffix(name) not in SHARED_NAME_SET or not get_shared_script():
+        return None
+    if commit is None:
+        root = ET.parse(HOME_PATH / 'rvx_version_info.xml').getroot()
+        tag_list = [x for x in get_declared_name_list(root) if is_for_this_os(x) and strip_os_suffix(x) == strip_os_suffix(name)]
+        commit = get_value(root, f'{tag_list[0]}.commit') if tag_list else None
+    if not commit:
+        return None
+    key = (strip_os_suffix(name), commit)
+    if key not in SHARED_PATH_DICT:
+        SHARED_PATH_DICT[key] = run_shared_script(name, None, commit, True)
+    return SHARED_PATH_DICT[key]
+
+
+def get_local_source(name: str):
+    local_path = HOME_PATH / strip_os_suffix(name)
+    if local_path.is_symlink() or not (local_path / '.git').is_dir():
+        if os.path.lexists(local_path):
+            print(f'[WARNING] {local_path} is NOT handed over to the shared place: it is NOT a git repository (remove it yourself)', flush=True)
+        return None
+    if git_output('status', '--porcelain', '--untracked-files=no', cwd=local_path):
+        print(f'[WARNING] {local_path} is NOT handed over to the shared place: it has local changes', flush=True)
+        return None
+    return local_path
+
+
+def clone_shared_module(name: str, url: str, commit: str):
+    print(f'## {name} {commit} ({url}, shared)', flush=True)
+    local_path = get_local_source(name)
+    path = run_shared_script(name, url, commit, False, local_path)
+    if local_path:
+        print(f'{local_path} is removed: {name} is in the shared place now', flush=True)
+        remove_path(local_path)
+    print(f'{name} is at {(HOME_PATH / path).resolve()}', flush=True)
+
+
 def read_module_list(info_file: Path):
     assert info_file.is_file(), info_file
     root = ET.parse(info_file).getroot()
@@ -98,7 +165,7 @@ def read_module_list(info_file: Path):
             assert not path or path.strip('/') == strip_os_suffix(name), f'{name} has to be in {strip_os_suffix(name)}, NOT {path}'
         if url:
             assert commit, f'{name}.commit is NOT found in {info_file}'
-            path = path or strip_os_suffix(name)
+            path = path or get_shared_path(name, commit) or strip_os_suffix(name)
         else:
             assert not commit, f'{name}.url is NOT found in {info_file}'
         if path:
@@ -171,9 +238,15 @@ def is_branch(commit: str):
     return not re.fullmatch(r'[0-9a-fA-F]{4,40}', commit)
 
 
+def update_submodules(module_path: Path):
+    if (module_path / '.gitmodules').is_file():
+        git('submodule', 'update', '--init', '--recursive', cwd=module_path)
+
+
 def setup_branch(module_path: Path, url: str, branch: str):
     if not os.path.lexists(module_path):
         git('clone', '-b', branch, url, str(module_path))
+        update_submodules(module_path)
         return
     git('fetch', 'origin', cwd=module_path)
     remote_branch = f'origin/{branch}'
@@ -188,6 +261,7 @@ def setup_branch(module_path: Path, url: str, branch: str):
         print('No update')
     elif is_ancestor(head, remote_branch, module_path):
         git('merge', '--ff-only', remote_branch, cwd=module_path)
+        update_submodules(module_path)
     else:
         print(f'Skipped: {branch} has diverged from {remote_branch}')
 
@@ -216,9 +290,11 @@ def setup_module(name: str, path: str, url: str, commit: str):
     env_path = get_env_path(name)
     if env_path:
         print(f'## {name} (env: {get_path_var(name)}={env_path})', flush=True)
+    elif url and path == get_shared_path(name, commit):
+        clone_shared_module(name, url, commit)
     else:
         update_module(name, path, url, commit)
-        if url and strip_os_suffix(name) == 'xarvis' and (HOME_PATH / path).parent == HOME_PATH:
+        if url and strip_os_suffix(name) == 'snn_torch' and (HOME_PATH / path).parent == HOME_PATH:
             make('setup_python', cwd=HOME_PATH / path)
             make('preinstall', cwd=HOME_PATH / path)
             make('install', cwd=HOME_PATH / path)
@@ -272,12 +348,16 @@ def update_module(name: str, path: str, url: str, commit: str):
         git('reset', '--hard', commit, cwd=module_path)
     elif is_ancestor(commit, head, module_path):
         print('Skipped: HEAD already contains the commit')
+        return
     elif git_output('status', '--porcelain', cwd=module_path):
         print('Skipped: there are uncommitted changes')
+        return
     elif git_output('branch', '--show-current', cwd=module_path) and is_ancestor(head, commit, module_path):
         git('merge', '--ff-only', commit, cwd=module_path)
     else:
         git('checkout', '--detach', commit, cwd=module_path)
+    if is_new or not head.startswith(commit):
+        update_submodules(module_path)
 
 
 def make(*arg_list, cwd: Path):

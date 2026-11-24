@@ -162,7 +162,7 @@ def remove_file(file: Path):
     file.unlink(missing_ok=True)
 
 
-def remove_files(dir: Path, pattern: str):
+def remove_file_by_pattern(dir: Path, pattern: str):
     if pattern and dir.is_dir():
         if is_linux:
             run_shell_cmd('rm -rf {0}'.format(pattern), dir)
@@ -368,9 +368,9 @@ if __name__ == '__main__':
     elif cmd == 'rm_file':
         check_argument_number(sys.argv, 1)
         remove_file(Path(sys.argv[2]))
-    elif cmd == 'rm_files':
+    elif cmd == 'rm_file_pattern':
         check_argument_number(sys.argv, 2)
-        remove_files(Path(sys.argv[2]), sys.argv[3])
+        remove_file_by_pattern(Path(sys.argv[2]), sys.argv[3])
     elif cmd == 'rm_dir':
         check_argument_number(sys.argv, 1)
         remove_directory(Path(sys.argv[2]))
