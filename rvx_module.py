@@ -36,6 +36,40 @@ SHARED_CLONE_SCRIPT = 'clone_rvx_module.py'
 SYSTEM_CA_FILE_LIST = ('/etc/pki/tls/certs/ca-bundle.crt', '/etc/ssl/certs/ca-certificates.crt', '/etc/ssl/cert.pem')
 
 
+def get_console_mode():
+    if os.name != 'nt':
+        return None
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GetStdHandle.restype = wintypes.HANDLE
+    saved = []
+    for std_handle in (-11, -12):
+        handle = kernel32.GetStdHandle(std_handle)
+        mode = wintypes.DWORD()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            saved.append((handle, mode.value))
+    return saved
+
+
+def set_console_mode(saved):
+    if saved:
+        import ctypes
+        for handle, mode in saved:
+            ctypes.windll.kernel32.SetConsoleMode(handle, mode | 0x3)
+
+
+set_console_mode(get_console_mode())
+
+
+def run_keeping_console_mode(*arg_list, **kwarg_dict):
+    saved = get_console_mode()
+    try:
+        return subprocess.run(*arg_list, **kwarg_dict)
+    finally:
+        set_console_mode(saved)
+
+
 def find_ca_file():
     if os.environ.get('SSL_CERT_FILE') or ssl.get_default_verify_paths().cafile:
         return None
@@ -97,14 +131,15 @@ def get_shared_script():
     return script_file if url.split('/')[-1] == SHARED_REPO_NAME else None
 
 
-def run_shared_script(name: str, url: str, commit: str, path_only: bool, source_path: Path = None):
+def run_shared_script(name: str, url: str, commit: str, path_only: bool, source_path: Path = None, pull: bool = False):
     arg_list = [sys.executable, str(get_shared_script()), '-name', strip_os_suffix(name), '-commit', commit]
     if not path_only:
         arg_list += ['-url', url, '-user_path', str(HOME_PATH), '-user_url', git_output('remote', 'get-url', 'origin', cwd=HOME_PATH)]
         arg_list += ['-source', str(source_path)] if source_path else []
+        arg_list += ['-pull'] if pull else []
     else:
         arg_list += ['-path_only']
-    result = subprocess.run(arg_list, stdout=subprocess.PIPE, universal_newlines=True)
+    result = run_keeping_console_mode(arg_list, stdout=subprocess.PIPE, universal_newlines=True)
     if result.returncode != 0:
         sys.exit(result.returncode)
     return os.path.relpath(result.stdout.strip().splitlines()[-1], HOME_PATH).replace(os.sep, '/')
@@ -150,6 +185,10 @@ def clone_shared_module(name: str, url: str, commit: str):
     print(f'{name} is at {(HOME_PATH / path).resolve()}', flush=True)
 
 
+def pull_shared_module(name: str, url: str, commit: str):
+    return run_shared_script(name, url, commit, False, pull=True)
+
+
 def read_module_list(info_file: Path):
     assert info_file.is_file(), info_file
     root = ET.parse(info_file).getroot()
@@ -183,13 +222,13 @@ def is_for_this_os(name: str):
 
 def git(*arg_list, cwd: Path = None):
     print('git', ' '.join(arg_list), flush=True)
-    result = subprocess.run(['git', *arg_list], cwd=cwd)
+    result = run_keeping_console_mode(['git', *arg_list], cwd=cwd)
     if result.returncode != 0:
         sys.exit(result.returncode)
 
 
 def git_output(*arg_list, cwd: Path):
-    result = subprocess.run(['git', *arg_list], cwd=cwd, stdout=subprocess.PIPE,
+    result = run_keeping_console_mode(['git', *arg_list], cwd=cwd, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, universal_newlines=True)
     return result.stdout.strip() if result.returncode == 0 else ''
 
@@ -222,7 +261,7 @@ def has_commit(commit: str, cwd: Path):
 
 
 def is_ancestor(ancestor: str, descendant: str, cwd: Path):
-    return subprocess.run(['git', 'merge-base', '--is-ancestor', ancestor, descendant], cwd=cwd).returncode == 0
+    return run_keeping_console_mode(['git', 'merge-base', '--is-ancestor', ancestor, descendant], cwd=cwd).returncode == 0
 
 
 def get_default_branch(cwd: Path):
@@ -362,7 +401,7 @@ def update_module(name: str, path: str, url: str, commit: str):
 
 def make(*arg_list, cwd: Path):
     print('make', ' '.join(arg_list), flush=True)
-    result = subprocess.run(['make', '--no-print-directory', *arg_list], cwd=cwd)
+    result = run_keeping_console_mode(['make', '--no-print-directory', *arg_list], cwd=cwd)
     if result.returncode != 0:
         sys.exit(result.returncode)
 

@@ -25,7 +25,7 @@ from xml.sax.saxutils import escape
 import xml.etree.ElementTree as ET
 
 from install import HOME_PATH, generate_gitignore, get_gitignore_generated_line_list, get_module_list, set_info_value
-from rvx_module import FIXED_NAME_SET, get_declared_name_list, get_path_var, get_value, git_output, is_branch, normalize_url, read_config_path, read_module_list, remove_path, strip_os_suffix
+from rvx_module import run_keeping_console_mode, FIXED_NAME_SET, get_declared_name_list, get_path_var, get_value, git_output, is_branch, normalize_url, read_config_path, read_module_list, remove_path, strip_os_suffix
 
 INFO_FILE = 'rvx_version_info.xml'
 OLD_LOCK_INFO_FILE = 'rvx_version_lock.xml'
@@ -46,7 +46,7 @@ def is_under(path: Path, parent: Path):
 
 def list_tracked_file(path: Path):
     # None when the path is NOT in a git repository
-    result = subprocess.run(['git', 'ls-files', '-z', '--recurse-submodules'], cwd=path,
+    result = run_keeping_console_mode(['git', 'ls-files', '-z', '--recurse-submodules'], cwd=path,
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     if result.returncode != 0:
         return None
@@ -81,7 +81,7 @@ def copy_file_list(src_dir: Path, dst_dir: Path, file_list: list):
 
 def get_gitlink_dict(home_path: Path):
     # {submodule path: commit} recorded in the release repository
-    result = subprocess.run(['git', 'ls-files', '-z', '-s'], cwd=home_path,
+    result = run_keeping_console_mode(['git', 'ls-files', '-z', '-s'], cwd=home_path,
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     gitlink_dict = {}
     for line in result.stdout.decode('utf8').split('\0') if result.returncode == 0 else []:
@@ -104,10 +104,10 @@ def clone_submodule(module_path: Path, dst_path: Path, target_path: Path):
     commit = git_output('rev-parse', 'HEAD', cwd=module_path)
     branch = git_output('branch', '--show-current', cwd=module_path)
     url = git_output('remote', 'get-url', 'origin', cwd=module_path)
-    subprocess.run(['git', 'clone', '-q', '--no-checkout', str(module_path), str(dst_path)], check=True)
+    run_keeping_console_mode(['git', 'clone', '-q', '--no-checkout', str(module_path), str(dst_path)], check=True)
     if url:
-        subprocess.run(['git', 'remote', 'set-url', 'origin', url], cwd=dst_path, check=True)
-    subprocess.run(['git', 'checkout', '-q'] + (['-B', branch, commit] if branch else ['--detach', commit]), cwd=dst_path, check=True)
+        run_keeping_console_mode(['git', 'remote', 'set-url', 'origin', url], cwd=dst_path, check=True)
+    run_keeping_console_mode(['git', 'checkout', '-q'] + (['-B', branch, commit] if branch else ['--detach', commit]), cwd=dst_path, check=True)
     return commit
 
 
@@ -127,11 +127,11 @@ def merge_gitmodules(gitmodules_file: Path, source_dict: dict, adds: bool):
     source_path_set = {value for info_list in source_dict.values() for key, value in info_list if key == 'path'}
     for name, info_list in read_gitmodules(gitmodules_file).items():
         if name in source_dict or dict(info_list).get('path') in source_path_set:
-            subprocess.run(['git', 'config', '-f', str(gitmodules_file), '--remove-section', f'submodule.{name}'], check=True)
+            run_keeping_console_mode(['git', 'config', '-f', str(gitmodules_file), '--remove-section', f'submodule.{name}'], check=True)
     if adds:
         for name, info_list in source_dict.items():
             for key, value in info_list:
-                subprocess.run(['git', 'config', '-f', str(gitmodules_file), f'submodule.{name}.{key}', value], check=True)
+                run_keeping_console_mode(['git', 'config', '-f', str(gitmodules_file), f'submodule.{name}.{key}', value], check=True)
     if gitmodules_file.is_file() and not read_gitmodules(gitmodules_file):
         print(f'{gitmodules_file.name} is removed')
         gitmodules_file.unlink()
@@ -139,7 +139,7 @@ def merge_gitmodules(gitmodules_file: Path, source_dict: dict, adds: bool):
 
 
 def get_top_file_list(home_path: Path):
-    result = subprocess.run(['git', 'ls-files', '-z'], cwd=home_path,
+    result = run_keeping_console_mode(['git', 'ls-files', '-z'], cwd=home_path,
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     if result.returncode == 0:
         file_list = [Path(x) for x in result.stdout.decode('utf8').split('\0') if x]
@@ -203,28 +203,28 @@ def remove_gitignore_line(gitignore_file: Path, removed_set: set):
 
 def stage(target_path: Path, file_list: list, removed_list: list, gitlink_dict: dict):
     if not (target_path / '.git').exists():
-        subprocess.run(['git', 'init', '-q'], cwd=target_path, check=True)
+        run_keeping_console_mode(['git', 'init', '-q'], cwd=target_path, check=True)
     if removed_list:
-        subprocess.run(['git', 'add', '-A', '--', '.gitmodules'], cwd=target_path, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        run_keeping_console_mode(['git', 'add', '-A', '--', '.gitmodules'], cwd=target_path, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         # unstage the removed directories so that their deleted files are staged as deletions
         pathspec = '\0'.join(x.relative_to(target_path).as_posix() for x in removed_list)
-        subprocess.run(['git', 'rm', '-r', '-q', '-f', '--cached', '--ignore-unmatch', '--pathspec-from-file=-', '--pathspec-file-nul'],
+        run_keeping_console_mode(['git', 'rm', '-r', '-q', '-f', '--cached', '--ignore-unmatch', '--pathspec-from-file=-', '--pathspec-file-nul'],
                        cwd=target_path, input=pathspec.encode('utf8'), check=True)
     path_list = [x.relative_to(target_path).as_posix() for x in file_list]
-    result = subprocess.run(['git', 'check-ignore', '-z', '--stdin'], cwd=target_path, input='\0'.join(path_list).encode('utf8'),
+    result = run_keeping_console_mode(['git', 'check-ignore', '-z', '--stdin'], cwd=target_path, input='\0'.join(path_list).encode('utf8'),
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     ignored_set = {x for x in result.stdout.decode('utf8').split('\0') if x}
     for path in sorted(ignored_set):
         print(f'[WARNING] {path} is ignored by .gitignore: it is NOT staged')
     pathspec = '\0'.join(x for x in path_list if x not in ignored_set)
-    subprocess.run(['git', '-c', 'core.safecrlf=false', 'add', '--pathspec-from-file=-', '--pathspec-file-nul'],
+    run_keeping_console_mode(['git', '-c', 'core.safecrlf=false', 'add', '--pathspec-from-file=-', '--pathspec-file-nul'],
                    cwd=target_path, input=pathspec.encode('utf8'), check=True)
     for path, commit in gitlink_dict.items():
-        subprocess.run(['git', 'update-index', '--add', '--cacheinfo', f'160000,{commit},{path}'], cwd=target_path, check=True)
+        run_keeping_console_mode(['git', 'update-index', '--add', '--cacheinfo', f'160000,{commit},{path}'], cwd=target_path, check=True)
     if gitlink_dict:
         # register the cloned submodules and move their .git into .git/modules, as git submodule update does
-        subprocess.run(['git', 'submodule', 'init', '-q'] + list(gitlink_dict), cwd=target_path, check=True)
-        subprocess.run(['git', 'submodule', 'absorbgitdirs'] + list(gitlink_dict), cwd=target_path, check=True)
+        run_keeping_console_mode(['git', 'submodule', 'init', '-q'] + list(gitlink_dict), cwd=target_path, check=True)
+        run_keeping_console_mode(['git', 'submodule', 'absorbgitdirs'] + list(gitlink_dict), cwd=target_path, check=True)
 
 
 def snapshot(target_path: Path, vendor: bool):
@@ -344,7 +344,7 @@ def snapshot(target_path: Path, vendor: bool):
             if (target_path / '.git' / 'modules' / name).exists():
                 remove_path(target_path / '.git' / 'modules' / name)
             if git_output('config', '--local', '--get-regexp', rf'^submodule\.{re.escape(name)}\.', cwd=target_path):
-                subprocess.run(['git', 'config', '--local', '--remove-section', f'submodule.{name}'], cwd=target_path, check=True)
+                run_keeping_console_mode(['git', 'config', '--local', '--remove-section', f'submodule.{name}'], cwd=target_path, check=True)
     if os.path.lexists(target_path / OLD_LOCK_INFO_FILE):
         remove_path(target_path / OLD_LOCK_INFO_FILE)
         removed_list.append(target_path / OLD_LOCK_INFO_FILE)

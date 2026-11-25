@@ -25,7 +25,7 @@ from pathlib import Path
 
 import xml.etree.ElementTree as ET
 
-from rvx_module import CONFIG_PATH_FILE, CONFIG_REPO_FILE, FIXED_NAME_SET, find_module, get_shared_path, get_declared_name_list, get_default_branch, get_env_path, get_path_var, get_value, is_branch, is_for_this_os, post_setup_module, read_config_path, read_module_list, remove_path, setup_module, SSL_CERT_FILE, strip_os_suffix, git_output
+from rvx_module import run_keeping_console_mode, CONFIG_PATH_FILE, CONFIG_REPO_FILE, FIXED_NAME_SET, find_module, get_shared_path, pull_shared_module, get_declared_name_list, get_default_branch, get_env_path, get_path_var, get_value, is_branch, is_for_this_os, post_setup_module, read_config_path, read_module_list, remove_path, setup_module, SSL_CERT_FILE, strip_os_suffix, git_output
 
 MIN_PYTHON_VERSION = (3, 8)
 MIN_MAKE_VERSION = (3, 81)
@@ -37,7 +37,7 @@ def is_windows():
 
 def run(cmd_list):
     try:
-        result = subprocess.run(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        result = run_keeping_console_mode(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 universal_newlines=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
         return None
@@ -137,7 +137,7 @@ def cmd_install_pip_package():
     cmd_list = [sys.executable, '-m', 'pip', 'install', '--upgrade'] + PIP_PACKAGE_LIST
     print(' '.join(cmd_list))
     sys.stdout.flush()
-    return subprocess.call(cmd_list)
+    return run_keeping_console_mode(cmd_list).returncode
 
 ##############
 # check_make #
@@ -471,7 +471,7 @@ def cmd_setup_misc():
         cmd_list = ['setx', 'RVX_RELEASE_HOME', HOME_PATH]
         print(' '.join(cmd_list))
         sys.stdout.flush()
-        returncode = subprocess.call(cmd_list)
+        returncode = run_keeping_console_mode(cmd_list).returncode
         if returncode == 0:
             print('open a new terminal to use RVX_RELEASE_HOME')
     else:
@@ -485,7 +485,7 @@ def cmd_setup_misc():
                     '-c', 'RVX_RELEASE_HOME={0}'.format(HOME_PATH)]
         print(' '.join(cmd_list))
         sys.stdout.flush()
-        returncode = subprocess.call(cmd_list)
+        returncode = run_keeping_console_mode(cmd_list).returncode
         if returncode == 0:
             print('source {0} to use RVX_RELEASE_HOME'.format(setup_file))
     return returncode
@@ -526,7 +526,7 @@ def cmd_setup_udev():
                      sudo_list + ['udevadm', 'trigger']):
         print(' '.join(cmd_list))
         sys.stdout.flush()
-        returncode = subprocess.call(cmd_list)
+        returncode = run_keeping_console_mode(cmd_list).returncode
         if returncode:
             return returncode
     return 0
@@ -608,7 +608,22 @@ def cmd_pull_modules():
             print('{0} (NOT cloned, skipped)'.format(name))
             continue
         if path == get_shared_path(name, commit):
-            print('{0} (shared, skipped: change its commit in rvx_version_info.xml)'.format(name))
+            old_commit = git_output('rev-parse', '--short=7', 'HEAD', cwd=module_path)
+            new_path = Path(HOME_PATH) / pull_shared_module(name, url, commit)
+            new_commit = git_output('rev-parse', '--short=7', 'HEAD', cwd=new_path)
+            if new_commit == old_commit:
+                print('{0} (shared, no update)'.format(name))
+                continue
+            if is_branch(commit):
+                print('{0} (shared, updated: {1} -> {2})'.format(name, old_commit, new_commit))
+                continue
+            info_file = os.path.join(HOME_PATH, 'rvx_version_info.xml')
+            with open(info_file, encoding='utf8') as f:
+                contents = f.read()
+            contents = set_info_value(contents, name, (('commit', new_commit),))
+            with open(info_file, 'w', encoding='utf8', newline='\n') as f:
+                f.write(contents)
+            print('{0} (shared, updated: {1} -> {2} in rvx_version_info.xml)'.format(name, commit, new_commit))
             continue
         # a branch given as .commit comes first
         branch = commit if is_branch(commit) else get_default_branch(module_path)
@@ -622,7 +637,7 @@ def cmd_pull_modules():
                          ['pull', '-q', '--ff-only', 'origin', branch]):
             if git_output('branch', '--show-current', cwd=module_path) == branch and arg_list[0] == 'checkout':
                 continue
-            result = subprocess.run(['git'] + arg_list, cwd=module_path, stdin=subprocess.DEVNULL)
+            result = run_keeping_console_mode(['git'] + arg_list, cwd=module_path, stdin=subprocess.DEVNULL)
             if result.returncode:
                 print('[FAIL] {0}: git {1} ({2})'.format(name, ' '.join(arg_list), module_path))
                 returncode = 1
@@ -630,7 +645,7 @@ def cmd_pull_modules():
         else:
             new_commit = git_output('rev-parse', '--short=7', 'HEAD', cwd=module_path)
             if new_commit != old_commit and (module_path / '.gitmodules').is_file():
-                result = subprocess.run(['git', 'submodule', 'update', '-q', '--init', '--recursive'], cwd=module_path, stdin=subprocess.DEVNULL)
+                result = run_keeping_console_mode(['git', 'submodule', 'update', '-q', '--init', '--recursive'], cwd=module_path, stdin=subprocess.DEVNULL)
                 if result.returncode:
                     print('[FAIL] {0}: git submodule update --init --recursive ({1})'.format(name, module_path))
                     returncode = 1
