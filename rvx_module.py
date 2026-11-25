@@ -294,7 +294,7 @@ def setup_module(name: str, path: str, url: str, commit: str):
         clone_shared_module(name, url, commit)
     else:
         update_module(name, path, url, commit)
-        if url and strip_os_suffix(name) == 'snn_torch' and (HOME_PATH / path).parent == HOME_PATH:
+        if url and strip_os_suffix(name) == 'snn_forge' and (HOME_PATH / path).parent == HOME_PATH:
             make('setup_python', cwd=HOME_PATH / path)
             make('preinstall', cwd=HOME_PATH / path)
             make('install', cwd=HOME_PATH / path)

@@ -105,6 +105,7 @@ setup_python_manual:
 	}
 
 PYTHON_PARENT_DIR?=$(abspath ${CURDIR}/..)
+PYTHON_PARENT_CONFIG_FILE?=${PYTHON_PARENT_DIR}/rvx_config_python.mh
 
 setup_python_at_parent:
 	@echo "make setup_python in ${PYTHON_PARENT_DIR}"
@@ -118,6 +119,9 @@ setup_python:
 	  ${MAKE} --no-print-directory setup_python_at_parent || exit 1; \
 	  echo "make share_python in ${PYTHON_PARENT_DIR}"; \
 	  MAKEFLAGS= ${MAKE} --no-print-directory -C "${PYTHON_PARENT_DIR}" share_python "PYTHON_SHARE_FILE=${PYTHON_CONFIG_FILE}" || exit 1; \
+	elif [ "${PYTHON_PARENT_DIR}" != "${CURDIR}" ] && [ -f "${PYTHON_PARENT_CONFIG_FILE}" ]; then \
+	  cp -f "${PYTHON_PARENT_CONFIG_FILE}" "${PYTHON_CONFIG_FILE}" || exit 1; \
+	  echo "copied ${PYTHON_PARENT_CONFIG_FILE}"; \
 	else \
 	  ${MAKE} --no-print-directory install_python || exit 1; \
 	fi
